@@ -1,7 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
-// Vercel 환경 변수와 코드 연결 (여기가 핵심!)
+// Vercel 설정과 똑같은 이름(VITE_)으로 맞춰주는 핵심 코드입니다.
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
