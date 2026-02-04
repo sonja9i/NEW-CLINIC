@@ -21,11 +21,10 @@ const BedCard: React.FC<BedCardProps> = ({
   const isEmpty = !bed.patientName;
   const isSpecial = bed.id === 0;
 
-  // [한글 꼬임 방지] 로컬 상태 추가
   const [localMemo, setLocalMemo] = useState(bed.memo || '');
   const [localArea, setLocalArea] = useState(bed.area || '');
+  const [inputName, setInputName] = useState(''); 
 
-  // [한글 꼬임 방지] DB 데이터가 바뀌면 로컬 상태도 동기화
   useEffect(() => { setLocalMemo(bed.memo || ''); }, [bed.memo]);
   useEffect(() => { setLocalArea(bed.area || ''); }, [bed.area]);
 
@@ -63,6 +62,13 @@ const BedCard: React.FC<BedCardProps> = ({
     e.dataTransfer.setData('patientName', bed.patientName);
   };
 
+  const submitPatient = () => {
+    if (inputName.trim()) {
+      onAssignPatient(bed.id, inputName);
+      setInputName(''); 
+    }
+  };
+
   return (
     <div 
       onDragOver={e => e.preventDefault()}
@@ -71,7 +77,6 @@ const BedCard: React.FC<BedCardProps> = ({
         isEmpty ? 'border-dashed border-slate-200 opacity-80' : bed.isAlarming ? 'border-rose-500 animate-pulse ring-4 ring-rose-100' : 'border-slate-100 shadow-lg'
       }`}
     >
-      {/* Bed Header */}
       <div 
         draggable={!isEmpty}
         onDragStart={handleDragBedStart}
@@ -88,14 +93,13 @@ const BedCard: React.FC<BedCardProps> = ({
               <span className="text-sm font-bold truncate">{bed.patientName}</span>
               <div className="flex items-center border-l border-white/20 pl-2 ml-1">
                 <span className="text-[10px] text-white/60 mr-1 font-medium">부위</span>
-                {/* [수정됨] 부위 입력창: 로컬 상태 사용, onBlur 시 저장 */}
                 <input 
                   type="text" 
                   value={localArea} 
                   placeholder="입력"
                   onChange={e => setLocalArea(e.target.value)}
                   onBlur={() => onUpdateArea(bed.id, localArea)}
-                  onKeyDown={(e) => { if(e.key === 'Enter') e.currentTarget.blur(); }}
+                  onKeyDown={(e) => { if(e.key === 'Enter' && !e.nativeEvent.isComposing) e.currentTarget.blur(); }}
                   className="bg-white/10 text-white text-[11px] px-1.5 py-0.5 rounded border-none w-14 focus:ring-1 focus:ring-white/40 placeholder-white/30"
                 />
               </div>
@@ -111,18 +115,30 @@ const BedCard: React.FC<BedCardProps> = ({
              <i className="fas fa-user-edit text-5xl mb-6 text-slate-200"></i>
              <div className="w-full text-center">
                 <label className="block text-[11px] font-bold text-slate-400 mb-2">환자 성함 입력</label>
+                
+                {/* [수정됨] 엔터키 문제 완벽 해결 */}
                 <input 
                   type="text" 
+                  value={inputName}
+                  onChange={(e) => setInputName(e.target.value)}
+                  onBlur={submitPatient} 
+                  onKeyDown={(e) => { 
+                    // 한글 조합 중일 때는 엔터 무시 (isComposing 확인)
+                    if (e.nativeEvent.isComposing) return;
+                    if (e.key === 'Enter') {
+                        e.preventDefault(); // 기본 동작 막기
+                        submitPatient(); 
+                    }
+                  }} 
                   placeholder="환자명 입력..."
                   className="bg-white text-base font-black border-2 border-slate-100 rounded-2xl px-3 py-4 w-full text-center focus:border-emerald-500 focus:ring-0 outline-none placeholder-slate-200 transition-all shadow-md"
-                  onKeyDown={e => { if (e.key === 'Enter') onUpdatePatient(bed.id, (e.target as HTMLInputElement).value); }}
                 />
+                
                 <span className="block mt-3 text-[10px] text-slate-300 font-medium tracking-tight">엔터를 누르면 입실됩니다</span>
              </div>
           </div>
         ) : (
           <>
-            {/* [수정됨] 메모장: 로컬 상태 사용, onBlur 시 저장 */}
             <div className="relative group">
               <i className="fas fa-bolt absolute left-3 top-2.5 text-amber-400 text-xs"></i>
               <textarea 
