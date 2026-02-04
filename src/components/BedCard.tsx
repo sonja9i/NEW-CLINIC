@@ -1,5 +1,4 @@
-
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Bed, Treatment, TreatmentStatus, TreatmentType } from '../types';
 import TreatmentItem from './TreatmentItem';
 
@@ -22,6 +21,14 @@ const BedCard: React.FC<BedCardProps> = ({
   const isEmpty = !bed.patientName;
   const isSpecial = bed.id === 0;
 
+  // [한글 꼬임 방지] 로컬 상태 추가
+  const [localMemo, setLocalMemo] = useState(bed.memo || '');
+  const [localArea, setLocalArea] = useState(bed.area || '');
+
+  // [한글 꼬임 방지] DB 데이터가 바뀌면 로컬 상태도 동기화
+  useEffect(() => { setLocalMemo(bed.memo || ''); }, [bed.memo]);
+  useEffect(() => { setLocalArea(bed.area || ''); }, [bed.area]);
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const type = e.dataTransfer.getData('type');
@@ -33,7 +40,6 @@ const BedCard: React.FC<BedCardProps> = ({
       if (payloadString) {
         const payload = JSON.parse(payloadString);
         if (payload.bedId !== bed.id) {
-          // 특수 치료실(ID: 0)이 출발지거나 목적지인 경우에만 이동 허용
           if (payload.bedId === 0 || bed.id === 0) {
             onMoveBedPatient(payload.bedId, bed.id, payload.patientName, payload.treatmentData);
           }
@@ -43,7 +49,6 @@ const BedCard: React.FC<BedCardProps> = ({
       const fromBedId = parseInt(e.dataTransfer.getData('fromBedId'));
       const patientName = e.dataTransfer.getData('patientName');
       if (fromBedId !== bed.id) {
-        // 특수 치료실(ID: 0)이 출발지거나 목적지인 경우에만 이동 허용
         if (fromBedId === 0 || bed.id === 0) {
           onMoveBedPatient(fromBedId, bed.id, patientName);
         }
@@ -83,9 +88,14 @@ const BedCard: React.FC<BedCardProps> = ({
               <span className="text-sm font-bold truncate">{bed.patientName}</span>
               <div className="flex items-center border-l border-white/20 pl-2 ml-1">
                 <span className="text-[10px] text-white/60 mr-1 font-medium">부위</span>
+                {/* [수정됨] 부위 입력창: 로컬 상태 사용, onBlur 시 저장 */}
                 <input 
-                  type="text" value={bed.area || ''} placeholder="입력"
-                  onChange={e => onUpdateArea(bed.id, e.target.value)}
+                  type="text" 
+                  value={localArea} 
+                  placeholder="입력"
+                  onChange={e => setLocalArea(e.target.value)}
+                  onBlur={() => onUpdateArea(bed.id, localArea)}
+                  onKeyDown={(e) => { if(e.key === 'Enter') e.currentTarget.blur(); }}
                   className="bg-white/10 text-white text-[11px] px-1.5 py-0.5 rounded border-none w-14 focus:ring-1 focus:ring-white/40 placeholder-white/30"
                 />
               </div>
@@ -112,10 +122,13 @@ const BedCard: React.FC<BedCardProps> = ({
           </div>
         ) : (
           <>
+            {/* [수정됨] 메모장: 로컬 상태 사용, onBlur 시 저장 */}
             <div className="relative group">
               <i className="fas fa-bolt absolute left-3 top-2.5 text-amber-400 text-xs"></i>
               <textarea 
-                value={bed.memo} onChange={e => onUpdateMemo(bed.id, e.target.value)}
+                value={localMemo} 
+                onChange={e => setLocalMemo(e.target.value)}
+                onBlur={() => onUpdateMemo(bed.id, localMemo)}
                 placeholder="환자 특이사항/메모 입력..." 
                 className="w-full h-14 bg-[#FEF9EC] text-[11px] pl-8 pr-3 py-2.5 rounded-xl border-none focus:ring-1 focus:ring-amber-200 text-slate-700 resize-none placeholder-amber-300 font-medium"
               />
