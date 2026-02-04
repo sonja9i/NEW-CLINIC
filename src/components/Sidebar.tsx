@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { WaitingPatient, WaitingCategory, DirectorTask } from '../types';
 
@@ -34,9 +33,22 @@ const Sidebar: React.FC<SidebarProps> = ({
     const type = e.dataTransfer.getData('type');
     if (type === 'TREATMENT') {
       const data = JSON.parse(e.dataTransfer.getData('payload'));
+      
+      // [수정됨] 상세 정보(부위 등) 가져오기
+      const details = data.treatmentData?.area || 
+                      data.treatmentData?.acupunctureType || 
+                      data.treatmentData?.hotPackMemo || '';
+
       if (['침', '추나', '부항'].includes(data.treatmentName)) {
-        onAddDirectorTask({ ...data, id: Math.random().toString(36).substr(2, 9), waitingSince: Date.now() });
+        onAddDirectorTask({ 
+            ...data, 
+            id: Math.random().toString(36).substr(2, 9), 
+            waitingSince: Date.now(),
+            details: details // 상세 정보 추가
+        });
       } else if (['소노', '충격파'].includes(data.treatmentName)) {
+        // 소노/충격파는 대기열로 보낼 때 부위 정보를 이름 옆에 붙여주거나 별도 처리 가능
+        // 여기서는 일단 대기열로만 보냄 (필요시 수정 가능)
         onAddPatient(data.patientName, data.treatmentName as any);
       }
     }
@@ -90,6 +102,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-[9px] font-mono text-purple-400">{formatWaitTime(task.waitingSince)}</span>
+                {/* [중요] 여기 클릭하면 completeDirectorTask 실행됨 */}
                 <i className="fas fa-check-circle text-purple-300 hover:text-emerald-500 cursor-pointer text-sm" onClick={() => onRemoveDirectorTask(task.id)}></i>
               </div>
             </div>
