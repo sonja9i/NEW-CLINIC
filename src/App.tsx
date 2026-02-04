@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Bed, WaitingPatient, Treatment, TreatmentStatus, TreatmentType, DirectorTask } from './types';
 import { TREATMENT_DURATIONS, DEFAULT_TREATMENT_NAMES } from './constants';
 import Sidebar from './components/Sidebar';
@@ -13,7 +12,7 @@ const App: React.FC = () => {
   const [directorTasks, setDirectorTasks] = useState<DirectorTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // 1. 실시간 데이터 구독 (Firestore)
+  // 1. 실시간 데이터 구독
   useEffect(() => {
     const unsub = onSnapshot(doc(db, "clinic", "current_status"), (docSnap) => {
       if (docSnap.exists()) {
@@ -22,7 +21,6 @@ const App: React.FC = () => {
         setWaitingList(data.waitingList || []);
         setDirectorTasks(data.directorTasks || []);
       } else {
-        // 초기 데이터 세팅
         const initialBeds = [
           { id: 0, name: '특수 물리치료실', patientName: '', area: '', memo: '', treatments: [] },
           ...Array.from({ length: 9 }, (_, i) => ({ id: i + 1, name: `B${i + 1}`, patientName: '', area: '', memo: '', treatments: [] }))
@@ -32,13 +30,12 @@ const App: React.FC = () => {
       setIsLoading(false);
     }, (error) => {
       console.error("Firebase Error:", error);
-      // Fallback: 에러 발생 시 로컬에서 프로젝트 시작 (연동 전 테스트용)
       setIsLoading(false);
     });
     return () => unsub();
   }, []);
 
-  // 2. 전체 상태 업데이트 함수 (Firebase 저장)
+  // 2. 저장 함수
   const syncWithFirebase = async (newBeds: Bed[], newWaiting?: WaitingPatient[], newTasks?: DirectorTask[]) => {
     try {
       await updateDoc(doc(db, "clinic", "current_status"), {
@@ -49,7 +46,7 @@ const App: React.FC = () => {
     } catch (e) { console.error("Sync Error:", e); }
   };
 
-  // 3. 타이머 로직 (로컬에서만 계산, 서버 부하 방지)
+  // 3. 타이머 로직
   useEffect(() => {
     const interval = setInterval(() => {
       setBeds((prevBeds) => {
@@ -135,6 +132,39 @@ const App: React.FC = () => {
     syncWithFirebase(newBeds);
   };
 
+  // [기능 추가] 원장실에서 완료(체크/X) 누르면 -> 해당 침대 치료 타이머 시작!
+  const completeDirectorTask = (taskId: string) => {
+    const task = directorTasks.find(t => t.id === taskId);
+    if (task) {
+      // 1. 침대 찾아서 치료 상태 '진행중'으로 변경
+      const newBeds = beds.map(bed => {
+        if (bed.id === task.bedId) {
+          return {
+            ...bed,
+            treatments: bed.treatments.map(t => {
+              // ID가 같거나, 이름이 같은 치료를 찾아서 시작
+              if (t.id === task.treatmentId || t.name === task.treatmentName) {
+                return { 
+                  ...t, 
+                  status: '진행중', 
+                  targetEndTime: Date.now() + (t.duration * 1000),
+                  timeLeft: t.duration
+                };
+              }
+              return t;
+            })
+          };
+        }
+        return bed;
+      });
+      // 2. 대기 목록에서 삭제하고 Firebase 저장
+      syncWithFirebase(newBeds, waitingList, directorTasks.filter(t => t.id !== taskId));
+    } else {
+      // 혹시 태스크가 없으면 그냥 삭제만
+      syncWithFirebase(beds, waitingList, directorTasks.filter(t => t.id !== taskId));
+    }
+  };
+
   const movePatientAndTreatment = (fromBedId: number, toBedId: number, patientName: string, specificTreatment?: Treatment) => {
     const fromBed = beds.find(b => b.id === fromBedId);
     const newBeds = beds.map(bed => {
@@ -142,8 +172,13 @@ const App: React.FC = () => {
         const isSpecial = toBedId === 0;
         let newTreatments = bed.patientName ? [...bed.treatments] : createDefaultTreatments(patientName, isSpecial);
         if (specificTreatment) {
-          if (!newTreatments.some(t => t.name === specificTreatment.name)) {
-            newTreatments.push({ ...specificTreatment, id: Math.random().toString(36).substr(2, 9), status: '대기' });
+          // [수정됨] 기존 치료가 있으면 덮어쓰지 않고 추가하되, 중복 방지
+          const existingIdx = newTreatments.findIndex(t => t.name === specificTreatment.name);
+          if (existingIdx !== -1) {
+             // 이미 같은 이름의 치료가 있다면, 가져온 데이터(부위 등)로 덮어쓰기
+             newTreatments[existingIdx] = { ...newTreatments[existingIdx], ...specificTreatment, id: newTreatments[existingIdx].id }; 
+          } else {
+             newTreatments.push({ ...specificTreatment, id: Math.random().toString(36).substr(2, 9), status: '대기' });
           }
         }
         return { ...bed, patientName: bed.patientName || patientName, treatments: newTreatments, memo: bed.memo || fromBed?.memo || '', area: bed.area || fromBed?.area || '' };
@@ -168,11 +203,7 @@ const App: React.FC = () => {
         waitingList={waitingList} directorTasks={directorTasks}
         onAddPatient={(name, category) => syncWithFirebase(beds, [...waitingList, { id: Date.now().toString(), name, category, waitingSince: Date.now() }])}
         onRemoveWaitingPatient={id => syncWithFirebase(beds, waitingList.filter(p => p.id !== id))}
-        onRemoveDirectorTask={id => {
-          const task = directorTasks.find(t => t.id === id);
-          if (task) updateTreatment(task.bedId, task.treatmentId, { status: '진행중' });
-          syncWithFirebase(beds, waitingList, directorTasks.filter(t => t.id !== id));
-        }}
+        onRemoveDirectorTask={completeDirectorTask} // [변경] 단순 삭제 -> 치료 시작 함수로 연결
         onDragPatientStart={(e, p) => { e.dataTransfer.setData('type', 'PATIENT'); e.dataTransfer.setData('patientName', p.name); }}
         onAddDirectorTask={task => syncWithFirebase(beds, waitingList, [...directorTasks, { ...task, id: Math.random().toString(36).substr(2, 9), waitingSince: Date.now() }])}
         onMoveToWaiting={(patient) => syncWithFirebase(beds, [...waitingList, patient])}
@@ -226,7 +257,15 @@ const App: React.FC = () => {
           }}
           onDragTreatmentStart={(e, t, bId, bName, pName) => {
               e.dataTransfer.setData('type', 'TREATMENT');
-              e.dataTransfer.setData('payload', JSON.stringify({ bedId: bId, bedName: bName, patientName: pName, treatmentName: t.name, treatmentId: t.id, treatmentData: t }));
+              // [수정됨] 치료 데이터를 통째로 JSON으로 넘김 (부위 정보 포함)
+              e.dataTransfer.setData('payload', JSON.stringify({ 
+                  bedId: bId, 
+                  bedName: bName, 
+                  patientName: pName, 
+                  treatmentName: t.name, 
+                  treatmentId: t.id, 
+                  treatmentData: t // 여기에 area, hotPackMemo 등이 다 들어있음
+              }));
           }}
           onMoveBedPatient={movePatientAndTreatment}
         />
