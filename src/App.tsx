@@ -4,7 +4,7 @@ import { TREATMENT_DURATIONS, DEFAULT_TREATMENT_NAMES } from './constants';
 import Sidebar from './components/Sidebar';
 import BedGrid from './components/BedGrid';
 import { db } from './firebase';
-import { doc, onSnapshot, setDoc, updateDoc } from "firebase/firestore";
+import { doc, onSnapshot, setDoc, updateDoc, getDoc } from "firebase/firestore";
 
 const App: React.FC = () => {
   const [beds, setBeds] = useState<Bed[]>([]);
@@ -30,12 +30,11 @@ const App: React.FC = () => {
       setIsLoading(false);
     }, (error) => {
       console.error("Firebase Error:", error);
-      setIsLoading(false);
+      setIsLoading(false); 
     });
     return () => unsub();
   }, []);
 
-  // 2. 저장 함수
   const syncWithFirebase = async (newBeds: Bed[], newWaiting?: WaitingPatient[], newTasks?: DirectorTask[]) => {
     try {
       await updateDoc(doc(db, "clinic", "current_status"), {
@@ -44,6 +43,52 @@ const App: React.FC = () => {
         directorTasks: newTasks || directorTasks
       });
     } catch (e) { console.error("Sync Error:", e); }
+  };
+
+  // [기능 추가] 환자 과거 기록 불러오기
+  const loadPatientHistory = async (name: string, bedId: number) => {
+    try {
+      const docRef = doc(db, "patients_history", name);
+      const docSnap = await getDoc(docRef);
+      
+      const isSpecial = bedId === 0;
+      let treatments = createDefaultTreatments(name, isSpecial);
+      let memo = '';
+      let area = '';
+
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        // 과거 기록이 있으면 덮어쓰기 (단, 상태는 '대기'로 리셋)
+        memo = data.memo || '';
+        area = data.area || '';
+        if (data.treatments && data.treatments.length > 0) {
+           treatments = data.treatments.map((t: Treatment) => ({
+             ...t,
+             status: '대기', // 다시 대기 상태로 시작
+             elapsedTime: 0,
+             timeLeft: t.duration, // 시간 리셋
+             targetEndTime: undefined
+           }));
+        }
+      }
+      return { memo, area, treatments };
+    } catch (e) {
+      console.error("History Load Error:", e);
+      return { memo: '', area: '', treatments: createDefaultTreatments(name, bedId === 0) };
+    }
+  };
+
+  // [기능 추가] 퇴실 시 기록 저장하기
+  const savePatientHistory = async (bed: Bed) => {
+    if (!bed.patientName) return;
+    try {
+      await setDoc(doc(db, "patients_history", bed.patientName), {
+        lastVisit: Date.now(),
+        memo: bed.memo,
+        area: bed.area,
+        treatments: bed.treatments // 치료 설정 그대로 저장
+      });
+    } catch (e) { console.error("History Save Error:", e); }
   };
 
   // 3. 타이머 로직
@@ -99,7 +144,12 @@ const App: React.FC = () => {
     }));
   };
 
-  const handleDischarge = (bedId: number) => {
+  // [수정] 퇴실 시 기록 저장 로직 추가
+  const handleDischarge = async (bedId: number) => {
+    const bed = beds.find(b => b.id === bedId);
+    if (bed) {
+      await savePatientHistory(bed); // 저장 먼저!
+    }
     const newBeds = beds.map(b => b.id === bedId ? { ...b, patientName: '', area: '', memo: '', treatments: [], isAlarming: false } : b);
     const newTasks = directorTasks.filter(t => t.bedId !== bedId);
     syncWithFirebase(newBeds, waitingList, newTasks);
@@ -132,17 +182,14 @@ const App: React.FC = () => {
     syncWithFirebase(newBeds);
   };
 
-  // [기능 추가] 원장실에서 완료(체크/X) 누르면 -> 해당 침대 치료 타이머 시작!
   const completeDirectorTask = (taskId: string) => {
     const task = directorTasks.find(t => t.id === taskId);
     if (task) {
-      // 1. 침대 찾아서 치료 상태 '진행중'으로 변경
       const newBeds = beds.map(bed => {
         if (bed.id === task.bedId) {
           return {
             ...bed,
             treatments: bed.treatments.map(t => {
-              // ID가 같거나, 이름이 같은 치료를 찾아서 시작
               if (t.id === task.treatmentId || t.name === task.treatmentName) {
                 return { 
                   ...t, 
@@ -157,10 +204,8 @@ const App: React.FC = () => {
         }
         return bed;
       });
-      // 2. 대기 목록에서 삭제하고 Firebase 저장
       syncWithFirebase(newBeds, waitingList, directorTasks.filter(t => t.id !== taskId));
     } else {
-      // 혹시 태스크가 없으면 그냥 삭제만
       syncWithFirebase(beds, waitingList, directorTasks.filter(t => t.id !== taskId));
     }
   };
@@ -172,10 +217,8 @@ const App: React.FC = () => {
         const isSpecial = toBedId === 0;
         let newTreatments = bed.patientName ? [...bed.treatments] : createDefaultTreatments(patientName, isSpecial);
         if (specificTreatment) {
-          // [수정됨] 기존 치료가 있으면 덮어쓰지 않고 추가하되, 중복 방지
           const existingIdx = newTreatments.findIndex(t => t.name === specificTreatment.name);
           if (existingIdx !== -1) {
-             // 이미 같은 이름의 치료가 있다면, 가져온 데이터(부위 등)로 덮어쓰기
              newTreatments[existingIdx] = { ...newTreatments[existingIdx], ...specificTreatment, id: newTreatments[existingIdx].id }; 
           } else {
              newTreatments.push({ ...specificTreatment, id: Math.random().toString(36).substr(2, 9), status: '대기' });
@@ -203,7 +246,7 @@ const App: React.FC = () => {
         waitingList={waitingList} directorTasks={directorTasks}
         onAddPatient={(name, category) => syncWithFirebase(beds, [...waitingList, { id: Date.now().toString(), name, category, waitingSince: Date.now() }])}
         onRemoveWaitingPatient={id => syncWithFirebase(beds, waitingList.filter(p => p.id !== id))}
-        onRemoveDirectorTask={completeDirectorTask} // [변경] 단순 삭제 -> 치료 시작 함수로 연결
+        onRemoveDirectorTask={completeDirectorTask}
         onDragPatientStart={(e, p) => { e.dataTransfer.setData('type', 'PATIENT'); e.dataTransfer.setData('patientName', p.name); }}
         onAddDirectorTask={task => syncWithFirebase(beds, waitingList, [...directorTasks, { ...task, id: Math.random().toString(36).substr(2, 9), waitingSince: Date.now() }])}
         onMoveToWaiting={(patient) => syncWithFirebase(beds, [...waitingList, patient])}
@@ -228,12 +271,33 @@ const App: React.FC = () => {
 
         <BedGrid 
           beds={beds}
-          onAssignPatient={(id, name) => {
-            const newBeds = beds.map(b => b.id === id ? { ...b, patientName: name, treatments: createDefaultTreatments(name, id === 0) } : b);
+          onAssignPatient={async (id, name) => {
+            // [수정] 환자 배정 시 과거 기록 불러오기
+            const history = await loadPatientHistory(name, id);
+            const newBeds = beds.map(b => b.id === id ? { 
+                ...b, 
+                patientName: name, 
+                treatments: history.treatments,
+                memo: history.memo,
+                area: history.area
+            } : b);
             syncWithFirebase(newBeds);
           }}
-          onUpdatePatient={(id, name) => {
-            const newBeds = beds.map(b => b.id === id ? { ...b, patientName: name, treatments: name ? createDefaultTreatments(name, id === 0) : [] } : b);
+          onUpdatePatient={async (id, name) => {
+            // [수정] 환자 이름 변경(입력) 시에도 과거 기록 불러오기
+            if (!name) {
+                const newBeds = beds.map(b => b.id === id ? { ...b, patientName: name, treatments: [] } : b);
+                syncWithFirebase(newBeds);
+                return;
+            }
+            const history = await loadPatientHistory(name, id);
+            const newBeds = beds.map(b => b.id === id ? { 
+                ...b, 
+                patientName: name, 
+                treatments: history.treatments,
+                memo: history.memo,
+                area: history.area
+            } : b);
             syncWithFirebase(newBeds);
           }}
           onUpdateMemo={(id, memo) => {
@@ -257,14 +321,13 @@ const App: React.FC = () => {
           }}
           onDragTreatmentStart={(e, t, bId, bName, pName) => {
               e.dataTransfer.setData('type', 'TREATMENT');
-              // [수정됨] 치료 데이터를 통째로 JSON으로 넘김 (부위 정보 포함)
               e.dataTransfer.setData('payload', JSON.stringify({ 
                   bedId: bId, 
                   bedName: bName, 
                   patientName: pName, 
                   treatmentName: t.name, 
                   treatmentId: t.id, 
-                  treatmentData: t // 여기에 area, hotPackMemo 등이 다 들어있음
+                  treatmentData: t 
               }));
           }}
           onMoveBedPatient={movePatientAndTreatment}
