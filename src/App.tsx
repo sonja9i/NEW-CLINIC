@@ -30,7 +30,7 @@ const App: React.FC = () => {
       setIsLoading(false);
     }, (error) => {
       console.error("Firebase Error:", error);
-      setIsLoading(false); 
+      setIsLoading(false);
     });
     return () => unsub();
   }, []);
@@ -45,7 +45,6 @@ const App: React.FC = () => {
     } catch (e) { console.error("Sync Error:", e); }
   };
 
-  // [기능 추가] 환자 과거 기록 불러오기
   const loadPatientHistory = async (name: string, bedId: number) => {
     try {
       const docRef = doc(db, "patients_history", name);
@@ -58,15 +57,14 @@ const App: React.FC = () => {
 
       if (docSnap.exists()) {
         const data = docSnap.data();
-        // 과거 기록이 있으면 덮어쓰기 (단, 상태는 '대기'로 리셋)
         memo = data.memo || '';
         area = data.area || '';
         if (data.treatments && data.treatments.length > 0) {
            treatments = data.treatments.map((t: Treatment) => ({
              ...t,
-             status: '대기', // 다시 대기 상태로 시작
+             status: '대기',
              elapsedTime: 0,
-             timeLeft: t.duration, // 시간 리셋
+             timeLeft: t.duration,
              targetEndTime: undefined
            }));
         }
@@ -78,7 +76,6 @@ const App: React.FC = () => {
     }
   };
 
-  // [기능 추가] 퇴실 시 기록 저장하기
   const savePatientHistory = async (bed: Bed) => {
     if (!bed.patientName) return;
     try {
@@ -86,12 +83,11 @@ const App: React.FC = () => {
         lastVisit: Date.now(),
         memo: bed.memo,
         area: bed.area,
-        treatments: bed.treatments // 치료 설정 그대로 저장
+        treatments: bed.treatments
       });
     } catch (e) { console.error("History Save Error:", e); }
   };
 
-  // 3. 타이머 로직
   useEffect(() => {
     const interval = setInterval(() => {
       setBeds((prevBeds) => {
@@ -144,17 +140,21 @@ const App: React.FC = () => {
     }));
   };
 
-  // [수정] 퇴실 시 기록 저장 로직 추가
   const handleDischarge = async (bedId: number) => {
     const bed = beds.find(b => b.id === bedId);
     if (bed) {
-      await savePatientHistory(bed); // 저장 먼저!
+      try {
+        await savePatientHistory(bed);
+      } catch (e) {
+        console.log("저장 실패해도 퇴실은 진행");
+      }
     }
     const newBeds = beds.map(b => b.id === bedId ? { ...b, patientName: '', area: '', memo: '', treatments: [], isAlarming: false } : b);
     const newTasks = directorTasks.filter(t => t.bedId !== bedId);
     syncWithFirebase(newBeds, waitingList, newTasks);
   };
 
+  // [수정] 완료 버튼 누르면 알람 끄기 (isAlarming: false 추가)
   const updateTreatment = (bedId: number, treatmentId: string, updates: Partial<Treatment>) => {
     const newBeds = beds.map(bed => {
       if (bed.id === bedId) {
@@ -175,7 +175,9 @@ const App: React.FC = () => {
           const score = { '진행중': 0, '대기': 1, '완료': 2, '안함': 3 };
           return score[a.status] - score[b.status];
         });
-        return { ...bed, treatments: newTreatments };
+        
+        // ★ 여기가 핵심: 상태를 건드리면(완료 등) 알람(빨간불)을 끈다!
+        return { ...bed, treatments: newTreatments, isAlarming: false };
       }
       return bed;
     });
@@ -272,7 +274,6 @@ const App: React.FC = () => {
         <BedGrid 
           beds={beds}
           onAssignPatient={async (id, name) => {
-            // [수정] 환자 배정 시 과거 기록 불러오기
             const history = await loadPatientHistory(name, id);
             const newBeds = beds.map(b => b.id === id ? { 
                 ...b, 
@@ -284,7 +285,6 @@ const App: React.FC = () => {
             syncWithFirebase(newBeds);
           }}
           onUpdatePatient={async (id, name) => {
-            // [수정] 환자 이름 변경(입력) 시에도 과거 기록 불러오기
             if (!name) {
                 const newBeds = beds.map(b => b.id === id ? { ...b, patientName: name, treatments: [] } : b);
                 syncWithFirebase(newBeds);
