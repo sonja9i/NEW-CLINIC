@@ -1,5 +1,4 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Treatment, TreatmentStatus, TreatmentType } from '../types';
 import { ACUPUNCTURE_TYPES, HOTPACK_TYPES } from '../constants';
 
@@ -11,6 +10,14 @@ interface TreatmentItemProps {
 
 const TreatmentItem: React.FC<TreatmentItemProps> = ({ treatment, onUpdate, onDragStart }) => {
   const [showControls, setShowControls] = useState(treatment.status === '대기');
+
+  // [한글 꼬임 방지] 로컬 상태 추가
+  const [localArea, setLocalArea] = useState(treatment.area || '');
+  const [localHotPackMemo, setLocalHotPackMemo] = useState(treatment.hotPackMemo || '');
+
+  // [한글 꼬임 방지] DB 데이터 동기화
+  useEffect(() => { setLocalArea(treatment.area || ''); }, [treatment.area]);
+  useEffect(() => { setLocalHotPackMemo(treatment.hotPackMemo || ''); }, [treatment.hotPackMemo]);
 
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
@@ -77,13 +84,16 @@ const TreatmentItem: React.FC<TreatmentItemProps> = ({ treatment, onUpdate, onDr
             {showControls && (
               <>
                 {isAreaTreatment && (
+                  // [수정됨] 치료 부위 입력창: 로컬 상태, onBlur 저장
                   <input 
                     type="text" 
                     placeholder="부위" 
-                    value={treatment.area || ''}
+                    value={localArea}
                     autoFocus
                     onClick={e => e.stopPropagation()}
-                    onChange={e => onUpdate({ area: e.target.value })}
+                    onChange={e => setLocalArea(e.target.value)}
+                    onBlur={() => onUpdate({ area: localArea })}
+                    onKeyDown={(e) => { if(e.key === 'Enter') e.currentTarget.blur(); }}
                     className="text-[12px] flex-1 min-w-[50px] px-2 py-1 bg-white/20 border border-white/30 rounded focus:bg-white focus:text-slate-800 outline-none font-bold placeholder-white/50 text-white"
                   />
                 )}
@@ -156,9 +166,12 @@ const TreatmentItem: React.FC<TreatmentItemProps> = ({ treatment, onUpdate, onDr
                   ))}
                 </div>
                 {(treatment.hotPackType === '자기장' || treatment.hotPackType === '두타베드') && (
+                  // [수정됨] 핫팩 메모 입력창: 로컬 상태, onBlur 저장
                   <input 
-                    type="text" placeholder="장비 메모..." value={treatment.hotPackMemo || ''}
-                    onChange={e => onUpdate({ hotPackMemo: e.target.value })}
+                    type="text" placeholder="장비 메모..." 
+                    value={localHotPackMemo}
+                    onChange={e => setLocalHotPackMemo(e.target.value)}
+                    onBlur={() => onUpdate({ hotPackMemo: localHotPackMemo })}
                     className="text-[10px] w-full px-2 py-1 bg-amber-50 border border-amber-100 rounded text-slate-800 outline-none font-bold"
                   />
                 )}
